@@ -1,0 +1,11 @@
+1. 0.3 40% Gyroid
+2. 0.3 60% Gyroid
+3. 0.3 80% Gyroid
+4. 0.3 40% Lines
+5. 0.3 60% Lines
+6. 0.3 80% Lines
+7. 0.3 80% honeycomb ===
+8. 0.3 60% honeycomb
+9. 0.3 40% honeycomb
+
+1120g
