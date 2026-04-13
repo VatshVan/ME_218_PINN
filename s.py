@@ -7,13 +7,14 @@ import torch.nn as nn
 from scipy.signal import savgol_filter
 from scipy.stats import linregress
 from torch.utils.data import TensorDataset, DataLoader
-torch.set_float32_matmul_precision('high')
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
+from matplotlib.gridspec import GridSpec
+torch.set_float32_matmul_precision('high')
 
-DIC_FILE = 'DIC_2D_Data.csv'
-UTM_FILE = 'Specimen_RawData_1.csv'
-CHECKPOINT_FILE = 'Batch_1.pth'
+DIC_FILE = r"Data\Gyroid_60\Gyroid_60_DIC_Data_Grid.csv"    #'DIC_2D_Data.csv'
+UTM_FILE = r"Data\80_Gyroid.CSV"    #'Specimen_RawData_1.csv'
+CHECKPOINT_FILE = r"Data\Result\Path_Folder\Batch_Gyroid_60.pth"   #'Batch_AL_2D_DIC_9_AM_9_April.pth'
 
 CROSS_SECTIONAL_AREA = 13.99 * 1.0 
 POISSONS_RATIO = 0.3
@@ -37,7 +38,9 @@ def smooth_displacement_field(df: pd.DataFrame, cols=('u_AVG', 'v_AVG'), window:
             win = min(window, len(vals) if len(vals) % 2 == 1 else len(vals) - 1)
             win = max(win, polyorder + 2 if (polyorder + 2) % 2 == 1 else polyorder + 3)
             if len(vals) >= win:
-                df_out.loc[idx, col] = savgol_filter(vals, window_length=win, polyorder=polyorder)
+                filtered = np.asarray(savgol_filter(vals, window_length=win, polyorder=polyorder))
+                df_out.loc[idx, col] = filtered
+                # df_out.loc[idx, col] = savgol_filter(vals, window_length=win, polyorder=polyorder)
     return df_out
 
 def isolate_hookean_regime(time_array, load_array, window_size=50, r_squared_threshold=0.999):
@@ -52,7 +55,7 @@ def isolate_hookean_regime(time_array, load_array, window_size=50, r_squared_thr
         l_window = l_trunc[i:i + window_size]
         
         _, _, r_value, _, _ = linregress(t_window, l_window)
-        r2_scores.append(r_value**2)
+        r2_scores.append(float(r_value)**2)
         
     r2_array = np.array(r2_scores)
     linear_blocks = np.where(r2_array >= r_squared_threshold)[0]
@@ -239,7 +242,10 @@ class AdaptiveLagrangianPINN(nn.Module):
         return self.surrogate(x, y, t)
 
     def get_multipliers(self):
-        return torch.exp(self.log_l_pde), torch.exp(self.log_l_force), torch.exp(self.log_l_diric), torch.exp(self.log_l_neum)
+        return (torch.clamp(torch.exp(self.log_l_pde), max=1e5), 
+                torch.clamp(torch.exp(self.log_l_force), max=1e5), 
+                torch.clamp(torch.exp(self.log_l_diric), max=1e5), 
+                torch.clamp(torch.exp(self.log_l_neum), max=1e5))
 
 # --- REFACTORED: Returns Raw Unscaled Residuals ---
 def compute_raw_residuals(model, x, y, t, u_emp, v_emp, p_emp, p_dot_emp, p_ddot_emp, bottom_mask, top_mask, norm: Normalizer):
@@ -393,6 +399,132 @@ def generate_spatial_tensor_maps(model_architecture, weights_file, x_limits, y_l
     plt.savefig(f'Displacement_Field_t{query_time}.png', dpi=300)
     plt.show()
 
+def generate_ultra_detailed_plots(model_architecture, weights_file, x_limits, y_limits, query_time, grid_resolution=400):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    checkpoint = torch.load(weights_file, map_location=device)
+    
+    # Model Reconstruction with Wrapper Handling
+    raw_state_dict = checkpoint['model_state_dict']
+    clean_state_dict = {k.replace('surrogate.', ''): v for k, v in raw_state_dict.items()}
+    model = model_architecture().to(device)
+    model.load_state_dict(clean_state_dict, strict=False)
+    model.eval()
+    
+    norm_mean = checkpoint['normalizer_mean']
+    norm_std = checkpoint['normalizer_std']
+
+    # 1. Grid & Normalization Setup
+    x = np.linspace(x_limits[0], x_limits[1], grid_resolution)
+    y = np.linspace(y_limits[0], y_limits[1], grid_resolution)
+    mesh_x, mesh_y = np.meshgrid(x, y)
+    
+    t_x = torch.tensor(mesh_x.flatten(), dtype=torch.float32, requires_grad=True).view(-1, 1).to(device)
+    t_y = torch.tensor(mesh_y.flatten(), dtype=torch.float32, requires_grad=True).view(-1, 1).to(device)
+    t_t = torch.full_like(t_x, float(query_time))
+
+    t_x_n = (t_x - norm_mean['x']) / norm_std['x']
+    t_y_n = (t_y - norm_mean['y']) / norm_std['y']
+    t_t_n = (t_t - norm_mean['t']) / norm_std['t']
+
+    # 2. Forward Pass & Physics Extraction
+    u_n, v_n, E, G = model(t_x_n, t_y_n, t_t_n)
+    u_phys = (u_n * norm_std['u']) + norm_mean['u']
+    v_phys = (v_n * norm_std['v']) + norm_mean['v']
+    
+    # Compute Jacobians for Strains
+    du_dx = torch.autograd.grad(u_phys, t_x, torch.ones_like(u_phys), retain_graph=True)[0]
+    du_dy = torch.autograd.grad(u_phys, t_y, torch.ones_like(u_phys), retain_graph=True)[0]
+    dv_dx = torch.autograd.grad(v_phys, t_x, torch.ones_like(v_phys), retain_graph=True)[0]
+    dv_dy = torch.autograd.grad(v_phys, t_y, torch.ones_like(v_phys), retain_graph=True)[0]
+    
+    # 3. Component Reshaping
+    U, V = u_phys.detach().cpu().numpy().reshape(grid_resolution, grid_resolution), v_phys.detach().cpu().numpy().reshape(grid_resolution, grid_resolution)
+    EM, GM = E.detach().cpu().numpy().reshape(grid_resolution, grid_resolution), G.detach().cpu().numpy().reshape(grid_resolution, grid_resolution)
+    Exx, Eyy = du_dx.detach().cpu().numpy().reshape(grid_resolution, grid_resolution), dv_dy.detach().cpu().numpy().reshape(grid_resolution, grid_resolution)
+    Gxy = (du_dy + dv_dx).detach().cpu().numpy().reshape(grid_resolution, grid_resolution)
+    
+    # 4. Derived Physics: Stress & Anisotropy
+    nu = 0.3 # Constant from s.py
+    Sxx = (EM / (1 - nu**2)) * (Exx + nu * Eyy)
+    Syy = (EM / (1 - nu**2)) * (Eyy + nu * Exx)
+    Txy = GM * Gxy
+    VM_Stress = np.sqrt(Sxx**2 - Sxx*Syy + Syy**2 + 3*Txy**2)
+    Anisotropy_Index = EM / (2 * GM * (1 + nu)) # Ratio of E_calculated to G_predicted
+
+    # 5. Plotting Execution
+    fig1, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    c0 = axs[0].contourf(mesh_x, mesh_y, U, levels=50, cmap='Spectral')
+    fig1.colorbar(c0, ax=axs[0])
+    axs[0].set_title("u-Displacement (Longitudinal)")
+
+    c1 = axs[1].contourf(mesh_x, mesh_y, V, levels=50, cmap='Spectral')
+    fig1.colorbar(c1, ax=axs[1])
+    axs[1].set_title("v-Displacement (Transverse)")
+
+    plt.tight_layout()
+    plt.savefig(f"Kinematics_t{query_time}.png", dpi=300)
+    # plt.show()
+
+    fig2, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    c2 = axs[0].contourf(mesh_x, mesh_y, EM, levels=50, cmap='viridis')
+    fig2.colorbar(c2, ax=axs[0])
+    axs[0].set_title("Elastic Modulus E(x,y)")
+
+    c3 = axs[1].contourf(mesh_x, mesh_y, GM, levels=50, cmap='plasma')
+    fig2.colorbar(c3, ax=axs[1])
+    axs[1].set_title("Shear Modulus G(x,y)")
+
+    plt.tight_layout()
+    plt.savefig(f"Elasticity_t{query_time}.png", dpi=300)
+    # plt.show()
+
+    fig3, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    c4 = axs[0].contourf(mesh_x, mesh_y, Exx, levels=50, cmap='inferno')
+    fig3.colorbar(c4, ax=axs[0])
+    axs[0].set_title("Strain ε_xx")
+
+    c5 = axs[1].contourf(mesh_x, mesh_y, Eyy, levels=50, cmap='inferno')
+    fig3.colorbar(c5, ax=axs[1])
+    axs[1].set_title("Strain ε_yy")
+
+    plt.tight_layout()
+    plt.savefig(f"Strain_t{query_time}.png", dpi=300)
+    # plt.show()
+
+    fig4, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    c6 = axs[0].contourf(mesh_x, mesh_y, VM_Stress, levels=50, cmap='magma')
+    fig4.colorbar(c6, ax=axs[0])
+    axs[0].set_title("Von Mises Stress (Predicted)")
+
+    c7 = axs[1].contourf(mesh_x, mesh_y, Anisotropy_Index, levels=50, cmap='coolwarm')
+    fig4.colorbar(c7, ax=axs[1])
+    axs[1].set_title("Anisotropy Ratio E / (2G(1+ν))")
+
+    plt.tight_layout()
+    plt.savefig(f"Stress_Anisotropy_t{query_time}.png", dpi=300)
+    # plt.show()
+
+    fig5, axs = plt.subplots(1, 2, figsize=(12, 5))
+
+    axs[0].scatter(Exx.flatten()[::20], EM.flatten()[::20],
+                c=EM.flatten()[::20], cmap='viridis', s=2, alpha=0.3)
+    axs[0].set_xlabel("Strain ε_xx")
+    axs[0].set_ylabel("Modulus E")
+    axs[0].set_title("Constitutive Path: ε_xx vs E")
+
+    axs[1].scatter(EM.flatten()[::20], GM.flatten()[::20],
+                c='crimson', s=2, alpha=0.3)
+    axs[1].set_xlabel("E (Longitudinal Proxy)")
+    axs[1].set_ylabel("G (Shear Proxy)")
+    axs[1].set_title("Modulus Distribution: E vs G")
+
+    plt.tight_layout()
+    plt.savefig(f"Diagnostics_t{query_time}.png", dpi=300)
+    plt.close()
 if __name__ == "__main__":
     t = time.time()
     t_1 = time.localtime(t)
@@ -513,6 +645,7 @@ if __name__ == "__main__":
 
                 # Backpropagate through both Neural Weights and Multipliers
                 lagrangian_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model_wrapper.surrogate.parameters(), max_norm=1.0)
                 
                 optimizer_theta.step()
                 # optimizer_lambda.step()
@@ -570,9 +703,16 @@ if __name__ == "__main__":
 
         print("Training complete. Checkpoint saved.")
 
-        generate_spatial_tensor_maps(
+    # generate_ultra_detailed_plots(OptimizedBifurcatedPINN, 
+    #                               CHECKPOINT_FILE, 
+    #                                 x_limits=(0, 13.9), 
+    #                                 y_limits=(0, 74), 
+    #                                 query_time=10,
+    #                                 grid_resolution=400)
+
+    generate_spatial_tensor_maps(
         model_architecture=OptimizedBifurcatedPINN, 
-        weights_file="Batch_1.pth",
+        weights_file=CHECKPOINT_FILE,
         x_limits=(0, 13.9), 
         y_limits=(0, 74), 
         query_time=10

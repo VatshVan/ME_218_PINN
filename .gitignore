@@ -2,3 +2,15 @@
 DIC_2D_Data.csv
 Specimen_RawData_1.csv
 _DIC_Data_Grid_1.csv
+infill_pattern.txt
+Data
+Report
+__pycache__
+A.py
+B.py
+Equilibrium_Stability.png
+*.png
+shootup.txt
+Diagnostics
+Spatial_Maps
+Detailed_Plots

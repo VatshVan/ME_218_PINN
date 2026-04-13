@@ -1,11 +1,21 @@
 1. 0.3 40% Gyroid
-2. 0.3 60% Gyroid
-3. 0.3 80% Gyroid
+2. 0.3 60% Gyroid ===
+3. 0.3 80% Gyroid  === done got
 4. 0.3 40% Lines
 5. 0.3 60% Lines
-6. 0.3 80% Lines
-7. 0.3 80% honeycomb ===
-8. 0.3 60% honeycomb
-9. 0.3 40% honeycomb
+6. 0.3 80% Lines  === done got
+7. 0.3 80% grid
+8. 0.3 60% grid
+9. 0.3 40% grid
 
 1120g
+
+80% Gyroid -> 1000 kg/m³ v -> 0.35 t -> 4.94 mm w -> 30.30 mm
+60% Gyroid -> 860 Kg/m³ v -> 0.36 t -> 4.98 mm w -> 30.04 mm
+80% Lines -> 1050 kg/m³ v -> 0.34 t -> 5.00 mm w -> 29.745 mm
+
+| Case       | ρ (kg/m³) | Structure            | Expected (E/E_{PLA}) | E_reference (MPa)  |
+| ---------- | --------- | -------------------- | -------------------- | ------------------ |
+| 80% Gyroid | 1000      | isotropic lattice    | ~0.55–0.65           | 1.8 GPa (1800 MPa) |
+| 60% Gyroid | 860       | more porous          | ~0.4–0.5             | 1.3 GPa (1300 MPa) |
+| 80% Lines  | 1050      | stiffer connectivity | ~0.7–0.8             | 2.25 GPa (2250 MPa)|
