@@ -1,11 +1,13 @@
 # Inverse Elasticity PINN via Direct Hybrid Collocation (DHC)
 
 This repository contains the implementation of a **Physics-Informed Neural Network (PINN)** framework designed for the inverse identification of spatially-varying Young's moduli in additively manufactured lattice structures. 
+[Go to detailed Math about this project](https://vatshvan.github.io/ME_218_PINN/DHC_PINN_Lecture.pdf)
 
 ## Overview
 Traditional Digital Image Correlation (DIC) data assimilation often relies on Radial Basis Function (RBF) pre-interpolation, which can lead to non-physical displacement gradients (e.g., strains exceeding 26,000%) due to a lack of mechanical constraints.
 
 The **Direct Hybrid Collocation (DHC)** paradigm eliminates RBF pre-processing by employing the neural network itself as the direct spatial interpolator. Sparse DIC blocks act as **Dirichlet anchors**, while a dense **Sobol quasi-random collocation cloud** enforces the 2D Cauchy Momentum PDE across the domain.
+[Go to Installation](#installation)
 
 ## Key Features
 * **Bifurcated Architecture**: Independent branches for kinematics (space-time) and constitutive behavior (space-only).
